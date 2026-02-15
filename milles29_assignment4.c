@@ -11,6 +11,7 @@ Citations:
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #define INPUT_LENGTH 2048
 #define MAX_ARGS 512
@@ -92,10 +93,75 @@ void builtin_cd(struct command_line *curr_command) {
 
 
 void builtin_status() {
-    if WIFEXITED(prior_status) {
+    if (WIFEXITED(prior_status)) {
         printf("exit value %d\n", WEXITSTATUS(prior_status));
     } else if (WIFSIGNALED(prior_status)) {
         printf("terminated by signal %d\n", WTERMSIG(prior_status));
+    }
+}
+
+
+void run_other_cmds(struct command_line *curr_command) {
+    pid_t spawn = fork();
+
+    switch(spawn) {
+        case -1:  
+            perror("fork() failure!");
+            exit(1);
+            break;
+        case 0:
+            curr_command->argv[curr_command->argc] = NULL;
+
+            if (curr_command->input_file != NULL) {
+                int fd = open(curr_command->input_file, O_RDONLY);
+
+                if (fd == -1) {
+                    fprintf(stderr, "cannot open %s for input\n", curr_command->input_file);
+                    exit(1);
+                }
+
+                dup2(fd, 0);
+                close(fd);
+            } else if (curr_command->is_bg) {
+                int dev_null = open("/dev/null", O_RDONLY);
+                dup2(dev_null, 0);
+                close(dev_null);
+            }
+
+            if (curr_command->output_file != NULL) {
+                int fd = open(curr_command->output_file, O_WRONLY | O_CREAT | O_TRUNC);
+
+                if (fd == -1) {
+                    fprintf(stderr, "cannot open %s for output\n", curr_command->output_file);
+                    exit(1);
+                }
+
+                dup2(fd, 1);
+                close(fd);
+            } else if (curr_command->is_bg) {
+                int dev_null = open("/dev/null", O_WRONLY);
+                dup2(dev_null, 1);
+                close(dev_null);
+            }
+
+            execvp(curr_command->argv[0], curr_command->argv);
+
+            perror(curr_command->argv[0]);
+            exit(1);
+        default:
+            if (curr_command->is_bg) {
+                printf("background pid is %d\n", spawn);
+                fflush(stdout);
+
+                children_pids[child_count++] = spawn;
+            } else {
+                waitpid(spawn, &prior_status, 0);
+
+                if (WIFSIGNALED(prior_status)) {
+                    printf("terminated by signal %d\n", WTERMSIG(prior_status));
+                    fflush(stdout);
+                }
+            }
     }
 }
 
@@ -106,21 +172,23 @@ int main() {
     /* Citation #1 */
     struct command_line *curr_command;
 
-    /* pid_t sampleSpawn = fork();
-
-    switch(sampleSpawn) {
-        case -1:  
-            perror("fork() failure!");
-            exit(1);
-            break;
-        case 0:
-            sleep(30);
-            exit(0);
-        default:
-            children_pids[child_count++] = sampleSpawn; */
-
     while (true) {
         curr_command = parse_input();
+
+        pid_t finished_pid;
+        int child_status;
+
+        while ((finished_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
+            printf("background pid %d is done: ", finished_pid);
+            
+            if (WIFEXITED(child_status)) {
+                printf("exit value is %d\n", child_status);
+            } else if (WIFSIGNALED(child_status)) {
+                printf("terminated by signal %d\n", WTERMSIG(child_status));
+            }
+
+            fflush(stdout);
+        }
 
         if (curr_command->argc == 0 || strncmp(curr_command->argv[0], "#", 1) == 0) {
             continue;
@@ -133,6 +201,8 @@ int main() {
         } 
         else if (strcmp(curr_command->argv[0], "status") == 0) {
             builtin_status();
+        } else {
+            run_other_cmds(curr_command);
         }
     }
 
