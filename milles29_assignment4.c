@@ -30,6 +30,9 @@ struct command_line {
 pid_t children_pids[MAX_CHILDREN];
 int child_count = 0;
 
+/* Int type for tracking exit statuses. */
+int prior_status = 0;
+
 /* Citation #1 */
 /* Parse command lines. */
 struct command_line *parse_input() {
@@ -88,6 +91,15 @@ void builtin_cd(struct command_line *curr_command) {
 }
 
 
+void builtin_status() {
+    if WIFEXITED(prior_status) {
+        printf("exit value %d\n", WEXITSTATUS(prior_status));
+    } else if (WIFSIGNALED(prior_status)) {
+        printf("terminated by signal %d\n", WTERMSIG(prior_status));
+    }
+}
+
+
 int main() {
     printf("$ smallsh\n");
 
@@ -113,12 +125,15 @@ int main() {
         if (curr_command->argc == 0 || strncmp(curr_command->argv[0], "#", 1) == 0) {
             continue;
         } 
-        if (strcmp(curr_command->argv[0], "exit") == 0) {
+        else if (strcmp(curr_command->argv[0], "exit") == 0) {
             builtin_exit();
         }
-        if (strcmp(curr_command->argv[0], "cd") == 0) {
+        else if (strcmp(curr_command->argv[0], "cd") == 0) {
             builtin_cd(curr_command);
         } 
+        else if (strcmp(curr_command->argv[0], "status") == 0) {
+            builtin_status();
+        }
     }
 
     return EXIT_SUCCESS;
