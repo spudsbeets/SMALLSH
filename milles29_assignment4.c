@@ -1,7 +1,12 @@
 /*
 Citations:
 1) Used and modified code from sample_parse.c, provided in assignment description: https://canvas.oregonstate.edu/courses/2031516/assignments/10318861
+2) Used and modified code from exploration in module 7 "Signal Handling API": https://canvas.oregonstate.edu/courses/2031516/pages/exploration-signal-handling-api?module_item_id=26231586
+3) Found usage reasons for volatile sig_atomic_t in this stack overflow forum: https://stackoverflow.com/questions/40518902/exactly-which-variables-need-to-be-sig-atomic-t-in-the-context-of-signal-handlin
 */
+
+/* Fixed issue with sigaction struct */
+#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -34,6 +39,10 @@ int child_count = 0;
 /* Int type for tracking exit statuses. */
 int prior_status = 0;
 
+/* Citation #3 */
+/* Tracking SIGTSTP state */
+volatile sig_atomic_t sigtstp_state = 0;
+
 /* Citation #1 */
 /* Parse command lines. */
 struct command_line *parse_input() {
@@ -50,8 +59,10 @@ struct command_line *parse_input() {
             curr_command->input_file = strdup(strtok(NULL, " \n"));
         } else if (!strcmp(token, ">")) {
             curr_command->output_file = strdup(strtok(NULL, " \n"));
-        } else if (!strcmp(token, "&")) {
+        } else if (!strcmp(token, "&") && sigtstp_state == 0) {
             curr_command->is_bg = true;
+        } else if (!strcmp(token, "&") && sigtstp_state != 0) {
+            curr_command->is_bg = false;
         } else {
             curr_command->argv[curr_command->argc++] = strdup(token);
         }
@@ -100,8 +111,25 @@ void builtin_status() {
     }
 }
 
+/* Citation #2 */
+/* SIGTSTP handler */
+void handle_SIGTSTP(int signum) {
+    if (sigtstp_state == 0) {
+        sigtstp_state = 1;
+        char *message = "Entering foreground-only mode (& is now ignored)\n: ";
+        write(STDOUT_FILENO, message, 51);
+    } else {
+        sigtstp_state = 0;
+        char *message = "Exiting foreground-only mode\n: ";
+        write(STDOUT_FILENO, message, 31);
+    }
+}
 
+/* Citation #2 */
 void run_other_cmds(struct command_line *curr_command) {
+    struct sigaction SIGINT_action = {0};
+    struct sigaction SIGTSTP_action = {0};
+
     pid_t spawn = fork();
 
     switch(spawn) {
@@ -110,6 +138,22 @@ void run_other_cmds(struct command_line *curr_command) {
             exit(1);
             break;
         case 0:
+            sigfillset(&SIGINT_action.sa_mask);
+            SIGINT_action.sa_flags = 0;
+
+            SIGTSTP_action.sa_handler = SIG_IGN;
+            sigfillset(&SIGTSTP_action.sa_mask);
+            SIGTSTP_action.sa_flags = 0;
+            sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+            if (curr_command->is_bg) {
+                SIGINT_action.sa_handler = SIG_IGN;
+                sigaction(SIGINT, &SIGINT_action, NULL);
+            } else {
+                SIGINT_action.sa_handler = SIG_DFL;
+                sigaction(SIGINT, &SIGINT_action, NULL);                
+            }
+
             curr_command->argv[curr_command->argc] = NULL;
 
             if (curr_command->input_file != NULL) {
@@ -172,6 +216,23 @@ int main() {
     /* Citation #1 */
     struct command_line *curr_command;
 
+    /* Citation #2 */
+    /* Handling SIGINT */
+    struct sigaction SIGINT_action = {0};
+    SIGINT_action.sa_handler = SIG_IGN;
+    sigfillset(&SIGINT_action.sa_mask);
+    SIGINT_action.sa_flags = 0;
+
+    sigaction(SIGINT, &SIGINT_action, NULL);
+
+    /* Handling SIGTSTP */
+    struct sigaction SIGTSTP_action = {0};
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    SIGTSTP_action.sa_flags = SA_RESTART;
+
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
     while (true) {
         curr_command = parse_input();
 
@@ -182,7 +243,7 @@ int main() {
             printf("background pid %d is done: ", finished_pid);
             
             if (WIFEXITED(child_status)) {
-                printf("exit value is %d\n", child_status);
+                printf("exit value is %d\n", WEXITSTATUS(child_status));
             } else if (WIFSIGNALED(child_status)) {
                 printf("terminated by signal %d\n", WTERMSIG(child_status));
             }
