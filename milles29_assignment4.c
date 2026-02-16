@@ -77,6 +77,7 @@ void builtin_exit() {
         kill(children_pids[i], SIGTERM);
     }
 
+    /* Ensures no children become zombie processes. */
     for (int i = 0; i < child_count; i++) {
         waitpid(children_pids[i], NULL, 0);
     }
@@ -84,6 +85,7 @@ void builtin_exit() {
     exit(0);
 }
 
+/* Built in cd functionality. */
 void builtin_cd(struct command_line *curr_command) {
     char *path;
 
@@ -102,7 +104,7 @@ void builtin_cd(struct command_line *curr_command) {
     }
 }
 
-
+/* Built in status functionality. */
 void builtin_status() {
     if (WIFEXITED(prior_status)) {
         printf("exit value %d\n", WEXITSTATUS(prior_status));
@@ -126,25 +128,26 @@ void handle_SIGTSTP(int signum) {
 }
 
 /* Citation #2 */
+/* Runs all commands that are not built in. */
 void run_other_cmds(struct command_line *curr_command) {
+    /* Setup sigaction structs. */
     struct sigaction SIGINT_action = {0};
     struct sigaction SIGTSTP_action = {0};
 
+    /* Spawn child process. */
     pid_t spawn = fork();
 
     switch(spawn) {
+        /* If there is an error in fork() */
         case -1:  
             perror("fork() failure!");
             exit(1);
             break;
+        /* Children process */
         case 0:
+            /* Setup SIGINT handling for foreground and background. */
             sigfillset(&SIGINT_action.sa_mask);
             SIGINT_action.sa_flags = 0;
-
-            SIGTSTP_action.sa_handler = SIG_IGN;
-            sigfillset(&SIGTSTP_action.sa_mask);
-            SIGTSTP_action.sa_flags = 0;
-            sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
             if (curr_command->is_bg) {
                 SIGINT_action.sa_handler = SIG_IGN;
@@ -154,8 +157,16 @@ void run_other_cmds(struct command_line *curr_command) {
                 sigaction(SIGINT, &SIGINT_action, NULL);                
             }
 
+            /* Setup SIGTSTP handling. */
+            SIGTSTP_action.sa_handler = SIG_IGN;
+            sigfillset(&SIGTSTP_action.sa_mask);
+            SIGTSTP_action.sa_flags = 0;
+            sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+            /* Place NULL at the end of argv for execvp functionality. */
             curr_command->argv[curr_command->argc] = NULL;
 
+            /* Handle input files. */
             if (curr_command->input_file != NULL) {
                 int fd = open(curr_command->input_file, O_RDONLY);
 
@@ -172,6 +183,7 @@ void run_other_cmds(struct command_line *curr_command) {
                 close(dev_null);
             }
 
+            /* Handle output files. */
             if (curr_command->output_file != NULL) {
                 int fd = open(curr_command->output_file, O_WRONLY | O_CREAT | O_TRUNC);
 
@@ -188,17 +200,22 @@ void run_other_cmds(struct command_line *curr_command) {
                 close(dev_null);
             }
 
+            /* Run new program. */
             execvp(curr_command->argv[0], curr_command->argv);
 
+            /* Error handling if execvp() fails. */
             perror(curr_command->argv[0]);
             exit(1);
+        /* Parent process */
         default:
             if (curr_command->is_bg) {
                 printf("background pid is %d\n", spawn);
                 fflush(stdout);
 
+                /* Update children_pids array for exit handling. */
                 children_pids[child_count++] = spawn;
             } else {
+                /* Only wait if child is called in the foreground. */
                 waitpid(spawn, &prior_status, 0);
 
                 if (WIFSIGNALED(prior_status)) {
@@ -217,7 +234,7 @@ int main() {
     struct command_line *curr_command;
 
     /* Citation #2 */
-    /* Handling SIGINT */
+    /* Handling SIGINT in main shell */
     struct sigaction SIGINT_action = {0};
     SIGINT_action.sa_handler = SIG_IGN;
     sigfillset(&SIGINT_action.sa_mask);
@@ -225,7 +242,7 @@ int main() {
 
     sigaction(SIGINT, &SIGINT_action, NULL);
 
-    /* Handling SIGTSTP */
+    /* Handling SIGTSTP in main shell */
     struct sigaction SIGTSTP_action = {0};
     SIGTSTP_action.sa_handler = handle_SIGTSTP;
     sigfillset(&SIGTSTP_action.sa_mask);
@@ -233,12 +250,14 @@ int main() {
 
     sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
+    /* Run loop until termination */
     while (true) {
         curr_command = parse_input();
 
         pid_t finished_pid;
         int child_status;
 
+        /* Check to see if any background processes terminated, print relevant info. */
         while ((finished_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
             printf("background pid %d is done: ", finished_pid);
             
@@ -251,6 +270,7 @@ int main() {
             fflush(stdout);
         }
 
+        /* Process command. */
         if (curr_command->argc == 0 || strncmp(curr_command->argv[0], "#", 1) == 0) {
             continue;
         } 
@@ -267,5 +287,6 @@ int main() {
         }
     }
 
+    /* When loop breaks, terminate program. */
     return EXIT_SUCCESS;
 }
