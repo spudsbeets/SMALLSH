@@ -116,12 +116,12 @@ void builtin_status() {
 void handle_SIGTSTP(int signum) {
     if (sigtstp_state == 0) {
         sigtstp_state = 1;
-        char *message = "Entering foreground-only mode (& is now ignored)\n: ";
-        write(STDOUT_FILENO, message, 51);
+        char *message = "\nEntering foreground-only mode (& is now ignored)\n: ";
+        write(STDOUT_FILENO, message, 52);
     } else {
         sigtstp_state = 0;
-        char *message = "Exiting foreground-only mode\n: ";
-        write(STDOUT_FILENO, message, 31);
+        char *message = "\nExiting foreground-only mode\n: ";
+        write(STDOUT_FILENO, message, 32);
     }
 }
 
