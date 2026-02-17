@@ -58,19 +58,9 @@ Displays the exit status or terminating signal of the most recent foreground pro
 
 Compile using `gcc`:
 
-`bash
-gcc -std=gnu99 -Wall -Wextra -o smallsh smallsh.c`
+`bash`
+`gcc -std=gnu99 -Wall -Wextra -o smallsh smallsh.c`
 
 ## Running
 
 `./smallsh`
-
-## Example Session
-
-`$ smallsh
-: ls
-file1.txt file2.txt
-: sleep 5 &
-background pid is 12345
-: status
-exit value 0`
